@@ -1,9 +1,9 @@
 pub mod hash {
 
     const USIZE_BITS: usize = std::mem::size_of::<usize>() * 8;
-    const HEAD_BIT_MASK: usize = 1 << (USIZE_BITS - 1);
-    const EMPTY_BIT_MASK: usize = HEAD_BIT_MASK >> 1;
-    const PROBE_BITS_MASK: usize = EMPTY_BIT_MASK - 1;
+    const EMPTY_BIT_MASK: usize = 1 << (USIZE_BITS - 1);
+    const HEAD_BIT_MASK: usize = EMPTY_BIT_MASK >> 1;
+    const PROBE_BITS_MASK: usize = HEAD_BIT_MASK - 1;
 
     /// This function calculates the initial index into the hash table. It multiplies the key
     /// by a constant integral value equal to 2^64 divided by the golden ratio.
@@ -24,14 +24,14 @@ pub mod hash {
         11400714819323198486
     } else if USIZE_BITS == 32 {
         2654435769
-    } else if USIZE_BITS == 128 {
-        2.103060685294028731657363699E+38
+    } else {
+        panic!("Only 32-bit and 64-bit platforms are supported.")
     };
 
     #[inline]
     fn hash(key: usize, shift: usize) -> usize {
         key.wrapping_mul(HASH_MULTIPLIER) >> shift
-    }
+    }    
 
     /// Returns true if the load factor greater than or equal to 0.9375.
     #[inline]
@@ -124,6 +124,7 @@ pub mod hash {
                 }
             }
 
+            #[inline]
             pub fn get(&mut self, key: usize) -> Option<&T> {
                 unsafe {
                     let h: usize = super::hash(key, self.shift);
@@ -147,6 +148,7 @@ pub mod hash {
                 }
             }
 
+            #[cfg_attr(feature = "inline-more", inline)]
             pub fn emplace(&mut self, key: usize, value: T) -> Option<T> {
                 unsafe {
                     let h: usize = super::hash(key, self.shift);
@@ -165,9 +167,7 @@ pub mod hash {
                         i = h;
                         loop {
                             if bucket.read().key == key {
-                                let v: T = (*bucket).value;
-                                (*bucket).value = value;
-                                return Some(v);
+                                return Some(std::ptr::addr_of_mut!((*bucket).value).replace(value));
                             }
                             if n == h {
                                 break;
@@ -193,24 +193,23 @@ pub mod hash {
                             n += 1;
                         }
                     } else {
+                        let mut last: *mut usize;
                         loop {
                             i = n;
-                            n = buckets.add(i).read().meta & super::PROBE_BITS_MASK;
+                            last = buckets.add(i) as *mut usize;
+                            n = last.read() & super::PROBE_BITS_MASK;
                             if n == h {
                                 break;
                             }
                         }
-                        let last: *mut usize = buckets.add(i) as *mut usize;
                         n = 1;
                         while n < self.capacity() {
                             i += n;
                             i &= self.mask;
                             let empty: *mut Bucket<T> = buckets.add(i);
-
                             if empty.read().meta & super::EMPTY_BIT_MASK != 0 {
                                 // point the current bucket to the empty bucket to remove h
                                 last.write((last.read() & super::HEAD_BIT_MASK) | i);
-
                                 // move h to the empty bucket and the key and value to h
                                 empty.write(bucket.replace(Bucket {
                                     meta: super::HEAD_BIT_MASK | h,
@@ -226,6 +225,7 @@ pub mod hash {
                 }
             }
 
+            #[inline]
             pub fn insert(&mut self, key: usize, value: T) -> Option<T> {
                 if super::should_grow(self.count, self.capacity()) {
                     self.grow();
@@ -239,6 +239,7 @@ pub mod hash {
                 }
             }
 
+            #[inline]
             pub fn delete(&mut self, key: usize) {
                 unsafe {
                     let buckets: *mut Bucket<T> = self.buckets.as_mut_ptr();
@@ -246,7 +247,7 @@ pub mod hash {
                     let mut erase: *mut Bucket<T> = null_mut();
                     let mut last: *mut Bucket<T> = buckets.add(h);
                     let mut prev_meta: *mut usize = null_mut();
-                    let mut meta: usize = last.cast::<usize>().read(); //(*last).meta;
+                    let mut meta: usize = last.read().meta;
 
                     if meta & super::HEAD_BIT_MASK != 0 {
                         meta ^= super::HEAD_BIT_MASK;
