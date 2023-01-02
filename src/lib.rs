@@ -1,9 +1,9 @@
-pub mod hash_table {
-    
-    const HEAD_BIT_MASK: usize = 9223372036854775808;
-    const EMPTY_BIT_MASK: usize = 4611686018427387904;
-    const PROBE_BITS_MASK: usize = 4611686018427387903;
+pub mod hash {
+
     const USIZE_BITS: usize = std::mem::size_of::<usize>() * 8;
+    const HEAD_BIT_MASK: usize = 1 << (USIZE_BITS - 1);
+    const EMPTY_BIT_MASK: usize = HEAD_BIT_MASK >> 1;
+    const PROBE_BITS_MASK: usize = EMPTY_BIT_MASK - 1;
 
     /// This function calculates the initial index into the hash table. It multiplies the key
     /// by a constant integral value equal to 2^64 divided by the golden ratio.
@@ -20,63 +20,71 @@ pub mod hash_table {
     ///
     /// For 64-bit values use 2^64 / golden_ratio = 11400714819323198486
     /// For 32-bit values use 2^32 / golden_ratio = 2654435769
+    const HASH_MULTIPLIER: usize = if USIZE_BITS == 64 {
+        11400714819323198486
+    } else if USIZE_BITS == 32 {
+        2654435769
+    } else if USIZE_BITS == 128 {
+        2.103060685294028731657363699E+38
+    };
+
     #[inline]
     fn hash(key: usize, shift: usize) -> usize {
-        key.wrapping_mul(2654435769) >> shift
+        key.wrapping_mul(HASH_MULTIPLIER) >> shift
     }
 
-    /// Is the load factor greater than or equal to 0.9375?
+    /// Returns true if the load factor greater than or equal to 0.9375.
     #[inline]
     fn should_grow(count: usize, capacity: usize) -> bool {
         count >= (capacity - (capacity >> 4))
     }
 
-    /// Is the load factor is less than 0.375?
+    /// Returns true if the load factor is less than or equal to 0.375.
     #[inline]
     fn should_shrink(count: usize, capacity: usize) -> bool {
         count <= (capacity >> 2) + (capacity >> 3)
     }
 
-    pub mod hash_map {
+    pub mod map {
 
         use std::fmt::Debug;
         use std::ptr::null_mut;
 
         #[derive(Debug, Copy, Clone)]
-            struct Bucket<T>
-            where
-                T: Debug + Clone + Copy + Default,
-            {
-                meta: usize,
-                key: usize,
-                value: T,
-            }
+        struct Bucket<T>
+        where
+            T: Debug + Clone + Copy + Default,
+        {
+            meta: usize,
+            key: usize,
+            value: T,
+        }
 
-            impl<T> Default for Bucket<T>
-            where
-                T: Debug + Clone + Copy + Default,
-            {
-                fn default() -> Self {
-                    Self {
-                        meta: super::EMPTY_BIT_MASK,
-                        key: 0,
-                        value: T::default(),
-                    }
+        impl<T> Default for Bucket<T>
+        where
+            T: Debug + Clone + Copy + Default,
+        {
+            fn default() -> Self {
+                Self {
+                    meta: super::EMPTY_BIT_MASK,
+                    key: 0,
+                    value: T::default(),
                 }
             }
+        }
 
-            #[derive(Debug, Clone)]
-            pub struct HashTable<T>
-            where
-                T: Debug + Clone + Copy + Default,
-            {
-                count: usize,
-                shift: usize,
-                mask: usize,
-                buckets: Vec<Bucket<T>>,
-            }
+        #[derive(Debug, Clone)]
+        pub struct HashTable<T>
+        where
+            T: Debug + Clone + Copy + Default,
+        {
+            count: usize,
+            shift: usize,
+            mask: usize,
+            buckets: Vec<Bucket<T>>,
+        }
 
-            impl<T> HashTable<T>
+        impl<T> HashTable<T>
         where
             T: Debug + Clone + Copy + Default,
         {
@@ -94,7 +102,7 @@ pub mod hash_table {
                     self.count as f64 / self.capacity() as f64
                 }
             }
-        
+
             pub fn count(&self) -> usize {
                 self.count
             }
@@ -198,12 +206,11 @@ pub mod hash_table {
                             i += n;
                             i &= self.mask;
                             let empty: *mut Bucket<T> = buckets.add(i);
-                            
-                            if empty.read().meta & super::EMPTY_BIT_MASK != 0 {
 
+                            if empty.read().meta & super::EMPTY_BIT_MASK != 0 {
                                 // point the current bucket to the empty bucket to remove h
                                 last.write((last.read() & super::HEAD_BIT_MASK) | i);
-                                
+
                                 // move h to the empty bucket and the key and value to h
                                 empty.write(bucket.replace(Bucket {
                                     meta: super::HEAD_BIT_MASK | h,
@@ -239,7 +246,7 @@ pub mod hash_table {
                     let mut erase: *mut Bucket<T> = null_mut();
                     let mut last: *mut Bucket<T> = buckets.add(h);
                     let mut prev_meta: *mut usize = null_mut();
-                    let mut meta: usize =  last.cast::<usize>().read(); //(*last).meta;
+                    let mut meta: usize = last.cast::<usize>().read(); //(*last).meta;
 
                     if meta & super::HEAD_BIT_MASK != 0 {
                         meta ^= super::HEAD_BIT_MASK;
@@ -275,11 +282,11 @@ pub mod hash_table {
                     let buckets: *mut Bucket<T> = self.buckets.as_mut_ptr();
                     let bucket: *mut Bucket<T> = buckets.add(h);
                     if bucket.read().meta & super::HEAD_BIT_MASK != 0 {
-                    //if (*bucket).meta & HEAD_BIT_MASK != 0 {
+                        //if (*bucket).meta & HEAD_BIT_MASK != 0 {
                         loop {
                             self.emplace(
                                 // will always hash to an index != h
-                                bucket.read().key, //(*bucket).key,
+                                bucket.read().key,   //(*bucket).key,
                                 bucket.read().value, //(*bucket).value,
                             );
                             let n: usize = (*bucket).meta ^ super::HEAD_BIT_MASK;
@@ -289,10 +296,13 @@ pub mod hash_table {
                             let next: *mut Bucket<T> = buckets.add(n);
                             //bucket.copy_from(next, 1);
                             bucket.copy_from_nonoverlapping(next, 1); // copy n into h
-                            //(*next).meta = EMPTY_BIT_MASK;
+                                                                      //(*next).meta = EMPTY_BIT_MASK;
                             next.cast::<usize>().write(super::EMPTY_BIT_MASK); // mark n as empty
-                            //(*bucket).meta |= HEAD_BIT_MASK;
-                            bucket.cast::<usize>().write(bucket.read().meta | super::HEAD_BIT_MASK); // turn on the header bit for h
+                                                                               //(*bucket).meta |= HEAD_BIT_MASK;
+                            bucket
+                                .cast::<usize>()
+                                .write(bucket.read().meta | super::HEAD_BIT_MASK);
+                            // turn on the header bit for h
                         }
                         //(*bucket).meta = EMPTY_BIT_MASK;
                         bucket.cast::<usize>().write(super::EMPTY_BIT_MASK);
@@ -380,9 +390,6 @@ pub mod hash_table {
                     self.buckets.truncate(new_capacity);
                 }
             }
-
         }
-
     }
-
 }

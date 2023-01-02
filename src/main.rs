@@ -1,7 +1,5 @@
 
-use rusty_buckets::hash_table::hash_map::HashTable;
-//use std::time::Instant;
-
+use rusty_buckets::hash::map::HashTable;
 
 fn main() {
 
@@ -57,6 +55,8 @@ fn main() {
     println!("Time elapsed {}", bench_result.elapsed().as_nanos() as f64 / SAMPLE_SIZE as f64);
     
 }
+
+//use std::time::Instant;
 
 /*fn main() {
 
